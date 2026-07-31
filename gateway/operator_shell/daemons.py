@@ -39,7 +39,7 @@ _SHORT = {
 
 
 def _uid() -> int:
-    return os.getuid()
+    return os.getuid()  # windows-footgun: ok — POSIX launchd (macOS) helper, never invoked on Windows
 
 
 def _plist_dir() -> Path:

@@ -768,7 +768,7 @@ def handle_estate_action(action: str, request_id: str = "") -> PanelView:
         )
 
     if action == "restart_confirm":
-        label = f"gui/{os.getuid()}/ai.hermes.coordinator"
+        label = f"gui/{os.getuid()}/ai.hermes.coordinator"  # windows-footgun: ok — POSIX launchd (macOS) helper, never invoked on Windows
         try:
             proc = subprocess.run(
                 ["launchctl", "kickstart", "-k", label],

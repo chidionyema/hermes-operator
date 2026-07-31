@@ -23,6 +23,24 @@ py-modules = ["hermes_constants", "utils"]
 [tool.setuptools.packages.find]
 include = ["gateway*"]
 
+# Ported verbatim from hermes-agent/pyproject.toml:345-364 so that this repo and
+# the monorepo lint identically. Deliberately NOT stricter: running default ruff
+# here reports 19 F541/F401/E741 hits that the monorepo intentionally disables,
+# and diverging would mean code that passes in one repo fails in the other.
+[tool.ruff]
+preview = true  # required for PLW1514 (unspecified-encoding) -- preview rule
+
+[tool.ruff.lint]
+# PLW1514 only. Bare open()/read_text()/write_text() in text mode defaults to the
+# system locale encoding on Windows (cp1252 on US-locale installs), silently
+# corrupting non-ASCII content. This rule caught notify_fanout.py:21 in the
+# monorepo's first-ever CI run.
+select = ["PLW1514"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests can intentionally exercise locale-encoding edge cases.
+"tests/**" = ["PLW1514"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # -q keeps CI output to the verdict line; the suite runs in ~2s.

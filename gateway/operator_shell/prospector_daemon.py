@@ -68,7 +68,7 @@ _SHORT_TO_LABEL.update(
 
 
 def _uid() -> int:
-    return os.getuid()
+    return os.getuid()  # windows-footgun: ok — POSIX launchd (macOS) helper, never invoked on Windows
 
 
 def installed(label: str) -> bool:

@@ -39,6 +39,14 @@ jobs:
           HERMES_LANE: claude
         run: pytest tests/ -q
 
+      - name: Lint (ruff)
+        # The monorepo's first-ever CI run caught 4 real lint defects in this
+        # code (unspecified encoding, bare os.getuid). Gate it here too so the
+        # two copies cannot drift apart on lint.
+        run: |
+          pip install ruff==0.15.10
+          ruff check .
+
       - name: Integrity fence -- no untracked modules
         # Mirrors gateway/operator_shell/integrity.py: running unreviewed code
         # is the failure this repo was created to make impossible.

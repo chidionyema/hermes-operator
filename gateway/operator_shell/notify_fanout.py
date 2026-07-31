@@ -18,7 +18,7 @@ def _ntfy_topic() -> Optional[str]:
         import yaml
         from pathlib import Path
         cfg = yaml.safe_load(
-            Path(os.path.expanduser("~/.hermes/config.yaml")).read_text()
+            Path(os.path.expanduser("~/.hermes/config.yaml")).read_text(encoding="utf-8")
         ) or {}
         block = cfg.get("operator_shell") or {}
         return str(block.get("ntfy_topic") or "").strip() or None
