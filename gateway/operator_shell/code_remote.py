@@ -6,10 +6,13 @@ Phone UX: start via `Otto code` / `cc`, live progress edits, `task <id>` card.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import time
 from typing import Any, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 ButtonRow = List[Tuple[str, str]]
 
@@ -78,8 +81,11 @@ def quota_honesty() -> Tuple[bool, str]:
     try:
         claude_ok = C._circuit_breaker_status("claude")
         agy_ok = C._circuit_breaker_status("agy")
-    except Exception:
-        pass
+    except Exception as exc:
+        # A failed probe is not a healthy breaker. Say so rather than
+        # reporting "ready" off a default we never confirmed.
+        logger.warning("circuit-breaker probe failed: %s", exc)
+        return True, f"⚠️ Breaker state unknown (probe failed: {type(exc).__name__}) — proceeding"
     if claude_ok:
         return True, "Claude Code CLI ready"
     if agy_ok:
@@ -257,7 +263,9 @@ def render_task_card(ref: str) -> Tuple[str, List[ButtonRow]]:
             # crude file path scrape
             paths = re.findall(r"[\w./-]+\.(?:py|ts|tsx|js|go|rs|md|yml|yaml)", result)
             if paths:
-                files = ", ".join(dict.fromkeys(paths)[:4])
+                # dict.fromkeys dedupes and preserves order, but a dict is not
+                # sliceable — materialise it before taking the first few.
+                files = ", ".join(list(dict.fromkeys(paths))[:4])
         blocker = err or (
             "money/identity fence" if st == "awaiting_approval" else ""
         )

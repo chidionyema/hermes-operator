@@ -25,9 +25,15 @@ def test_operator_menu_is_twelve_or_fewer():
     assert "cron" in OPERATOR_TELEGRAM_MENU
 
 
-def test_filter_operator_menu_preserves_order():
+def test_filter_operator_menu_uses_tier0_order_not_input_order():
+    # filter_operator_menu emits OPERATOR_TELEGRAM_MENU order (menu.py:49),
+    # not the caller's order, and drops anything not Tier-0 ("zzz", "new").
     cmds = [("zzz", "Z"), ("panel", "Panel"), ("help", "Help"), ("cron", "Cron"), ("new", "New")]
-    assert [n for n, _ in filter_operator_menu(cmds)] == ["help", "new", "panel", "cron"]
+    assert [n for n, _ in filter_operator_menu(cmds)] == ["panel", "cron", "help"]
+
+
+def test_filter_operator_menu_drops_non_tier0():
+    assert filter_operator_menu([("zzz", "Z"), ("new", "New")]) == []
 
 
 def test_resolve_menu_profile_operator():
