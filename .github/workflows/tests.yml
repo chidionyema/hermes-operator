@@ -1,0 +1,51 @@
+name: tests
+
+# The reason this file exists: the operator shell shipped a RED suite in
+# 5aa5788607 because it lived in a 1.6 GB monorepo whose CI never ran on this
+# code. Standalone, the suite runs in ~2 seconds, so there is no excuse for it
+# not to gate every push.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        # No ~/.hermes on a clean runner: this is the clean-room case that the
+        # monorepo could never exercise. The suite is required to pass without
+        # the host estate present.
+        env:
+          HERMES_LANE: claude
+        run: pytest tests/ -q
+
+      - name: Integrity fence -- no untracked modules
+        # Mirrors gateway/operator_shell/integrity.py: running unreviewed code
+        # is the failure this repo was created to make impossible.
+        run: |
+          python - <<'PY'
+          from gateway.operator_shell import integrity
+          ghosts = integrity.ghost_modules()
+          print("ghost_modules() ->", ghosts)
+          raise SystemExit(1 if ghosts else 0)
+          PY

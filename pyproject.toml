@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-operator"
+version = "0.1.0"
+description = "Operator shell for Hermes -- Telegram-driven estate ops, daemon control and remote coding."
+requires-python = ">=3.11"
+dependencies = [
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+# ruamel is used by utils.atomic_yaml_write for comment-preserving writes;
+# it degrades to plain PyYAML when absent.
+yaml-roundtrip = ["ruamel.yaml>=0.18"]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools]
+py-modules = ["hermes_constants", "utils"]
+
+[tool.setuptools.packages.find]
+include = ["gateway*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# -q keeps CI output to the verdict line; the suite runs in ~2s.
+addopts = "-q"

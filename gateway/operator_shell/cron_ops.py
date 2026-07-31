@@ -21,8 +21,24 @@ _USAGE = (
 
 
 def _cron_api(**kwargs) -> Dict[str, Any]:
-    from tools.cronjob_tools import cronjob as cronjob_tool
+    """Call the host's cronjob tool.
+
+    ``tools.cronjob_tools`` is an OPTIONAL host integration -- it lives in the
+    hermes-agent monorepo and drags in ``cron.jobs`` / ``hermes_cli`` /
+    ``gateway.session_context``, none of which this package depends on.  When it
+    is absent we return the same ``{"success": False}`` shape every caller here
+    already checks for (see ``cron_strip_lines``), so the cron panel degrades to
+    "unavailable" instead of raising ImportError up into a Telegram callback.
+
+    This mirrors the pattern already used for the other optional host imports in
+    ``delivery.py``, ``menu.py`` and ``prospector_daemon.py``.
+    """
     import json
+
+    try:
+        from tools.cronjob_tools import cronjob as cronjob_tool
+    except ImportError:
+        return {"success": False, "error": "cron backend unavailable (tools.cronjob_tools not installed)"}
 
     return json.loads(cronjob_tool(**kwargs))
 
