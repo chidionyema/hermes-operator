@@ -1,11 +1,14 @@
-"""Pinned mission card — Elon cockpit: one glance, one CTA, RSI visible."""
+"""Pinned mission card — Elon cockpit: one glance, one CTA, RSI visible.
+
+Honesty rule: never 🟢 CLEAR when anything is blocked/degraded/busy.
+"""
 
 from __future__ import annotations
 
 import logging
 import os
 import time
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +21,51 @@ def _coord():
     return _load_coordinator()
 
 
+def _cb_bits(C) -> Tuple[bool, bool, str]:
+    """Return (claude_ok, agy_ok, detail). True = healthy."""
+    claude_ok = agy_ok = True
+    try:
+        if hasattr(C, "_circuit_breaker_status"):
+            claude_ok = bool(C._circuit_breaker_status("claude"))
+            agy_ok = bool(C._circuit_breaker_status("agy"))
+    except Exception:
+        pass
+    if claude_ok and agy_ok:
+        return True, True, ""
+    if not claude_ok and not agy_ok:
+        return False, False, "Claude+agy CB open"
+    if not claude_ok:
+        return False, True, "Claude CB open"
+    return True, False, "agy CB open"
+
+
+def _blocked_missions(conn) -> int:
+    try:
+        import flight
+
+        return sum(1 for m in flight.list_missions(conn) if m["status"] == "blocked")
+    except Exception:
+        return 0
+
+
+def _inflight_code(conn) -> Optional[Tuple[str, str]]:
+    try:
+        row = conn.execute(
+            "SELECT id, status FROM tasks WHERE source='code:telegram' "
+            "AND status IN ('open','diagnosed','executing','verifying') "
+            "ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            return None
+        tid = row["id"] if hasattr(row, "keys") else row[0]
+        st = row["status"] if hasattr(row, "keys") else row[1]
+        return str(tid), str(st)
+    except Exception:
+        return None
+
+
 def _verdict(conn, C) -> Tuple[str, str]:
-    """Return (emoji_word, detail). Never false-DEGRADED via fragile pgrep."""
+    """Return (emoji_word, detail). Never false-CLEAR when estate needs attention."""
     try:
         hb = C.get_meta(conn, "last_tick")
         tick_age = int(time.time() - hb["updated_at"]) if hb else None
@@ -36,6 +82,10 @@ def _verdict(conn, C) -> Tuple[str, str]:
         used = C.tasks_today(conn)
         budget = C.DAILY_TASK_BUDGET
         dec = [d for d in C.decisions_view(conn) if C._is_operator_facing(d)]
+        blocked_n = _blocked_missions(conn)
+        code = _inflight_code(conn)
+        claude_ok, agy_ok, cb_detail = _cb_bits(C)
+
         if paused:
             return "🟡 PAUSED", "spend frozen"
         if not ((daemon_ok or daemon_proc) and gateway_ok):
@@ -49,8 +99,17 @@ def _verdict(conn, C) -> Tuple[str, str]:
             return "🔴 DEGRADED", " · ".join(bits)
         if used >= budget:
             return "🔴 BUDGET", f"{used}/{budget} tasks"
+        if not claude_ok and not agy_ok:
+            return "🔴 CB", cb_detail
         if dec:
             return "🟡 BLOCKED", f"{len(dec)} need you"
+        if blocked_n:
+            return "🟡 BLOCKED", f"{blocked_n} mission(s) blocked"
+        if code:
+            tid, st = code
+            return "🟡 BUSY", f"code `{tid[:8]}` {st}"
+        if not claude_ok:
+            return "🟡 DEGRADED", cb_detail
         return "🟢 CLEAR", "go"
     except Exception as exc:
         logger.warning("verdict failed: %s", exc)
@@ -98,6 +157,12 @@ def _top_blocker(conn, C) -> str:
                     return f"MISSION `{m['id'][:8]}` {m['name'][:28]} blocked (quota?)"
         except Exception:
             pass
+        claude_ok, agy_ok, cb_detail = _cb_bits(C)
+        if not claude_ok or not agy_ok:
+            return f"CB {cb_detail}"
+        code = _inflight_code(conn)
+        if code:
+            return f"CODE `{code[0][:8]}` {code[1]}"
         return "—"
     except Exception:
         return "—"
@@ -118,7 +183,6 @@ def _product_line(conn, C) -> str:
             if not cur:
                 continue
             st = m["status"].upper()
-            acc = (cur["done_criterion"] or "")[:48]
             return f"🚀 `{m['name'][:18]}` {st} · M{cur['seq']+1}: {cur['title'][:28]}"
     except Exception:
         pass
@@ -138,10 +202,30 @@ def _product_autonomy(conn, C) -> str:
 
 
 def _primary_cta(conn, C, verdict: str) -> Tuple[str, str]:
-    """Exactly one primary CTA — founder action, not decoration."""
+    """Exactly one primary CTA — real next estate action, not decoration."""
     if C.estate_paused():
         return ("▶️ Resume spend", "estate:resume")
-    # Money/identity fence always wins — but code:telegram fences deep-link to the task card
+    # Daemon / gateway down → restart path (not Prospector)
+    try:
+        gateway_ok = (
+            C.gateway_alive() if hasattr(C, "gateway_alive") else True
+        )
+        hb = C.get_meta(conn, "last_tick")
+        tick_age = int(time.time() - hb["updated_at"]) if hb else None
+        daemon_ok = tick_age is not None and tick_age < 200
+        daemon_proc = C._proc_alive("coordinator.py daemon")
+        if hasattr(C, "_launchctl_running"):
+            daemon_proc = daemon_proc or (
+                C._launchctl_running("ai.hermes.coordinator") is True
+            )
+        if not (daemon_ok or daemon_proc):
+            return ("♻️ Restart coord", "estate:restart")
+        if not gateway_ok:
+            return ("⚙️ Daemons", "estate:daemons")
+    except Exception:
+        pass
+
+    # Money/identity fence always wins — code fences deep-link to task card
     try:
         fence = conn.execute(
             "SELECT id, source FROM tasks WHERE status='awaiting_approval' "
@@ -151,45 +235,45 @@ def _primary_cta(conn, C, verdict: str) -> Tuple[str, str]:
         ).fetchone()
         if fence:
             fid = fence["id"] if hasattr(fence, "keys") else fence[0]
-            src = fence["source"] if hasattr(fence, "keys") else (fence[1] if len(fence) > 1 else "")
+            src = fence["source"] if hasattr(fence, "keys") else (
+                fence[1] if len(fence) > 1 else ""
+            )
             if src == "code:telegram":
                 return (f"💰 Code fence {str(fid)[:8]}", f"estate:task:{str(fid)[:8]}")
             return ("💰 Approve fence", "estate:inbox")
     except Exception:
         pass
-    # In-flight Claude Code remote → primary CTA (steer/cancel without remembering IDs)
-    try:
-        code_run = conn.execute(
-            "SELECT id, status FROM tasks WHERE source='code:telegram' "
-            "AND status IN ('open','diagnosed','executing','verifying') "
-            "ORDER BY created_at DESC LIMIT 1"
-        ).fetchone()
-        if code_run:
-            tid = code_run["id"] if hasattr(code_run, "keys") else code_run[0]
-            st = code_run["status"] if hasattr(code_run, "keys") else code_run[1]
-            label = {
-                "executing": "💻 Code run",
-                "verifying": "🔎 Code verify",
-            }.get(st, "💻 Code run")
-            return (f"{label} {str(tid)[:8]}", f"estate:task:{str(tid)[:8]}")
-    except Exception:
-        pass
+
+    # Dual CB → fuel/honesty, not fake ship
+    claude_ok, agy_ok, _ = _cb_bits(C)
+    if not claude_ok and not agy_ok:
+        return ("⛽ Fuel / CB", "estate:system_fuel")
+
+    # In-flight coding run
+    code = _inflight_code(conn)
+    if code:
+        tid, st = code
+        label = {
+            "executing": "💻 Code run",
+            "verifying": "🔎 Code verify",
+        }.get(st, "💻 Code run")
+        return (f"{label} {tid[:8]}", f"estate:task:{tid[:8]}")
+
     try:
         dec = [d for d in C.decisions_view(conn) if C._is_operator_facing(d)]
         if dec:
             return ("📥 Decide", "estate:inbox")
     except Exception:
         pass
-    try:
-        import flight
+    if _blocked_missions(conn):
+        return ("📥 Decide", "estate:inbox")
 
-        if any(m["status"] == "blocked" for m in flight.list_missions(conn)):
-            return ("📥 Decide", "estate:inbox")
-    except Exception:
-        pass
-    if "DEGRADED" in verdict or "BUDGET" in verdict:
-        return ("🔄 Refresh", "estate:refresh")
-    # RSI live fire → surface before busywork (ignore Phase0 fails cleared by newer hash)
+    if "BUDGET" in verdict:
+        return ("⛽ Fuel", "estate:system_fuel")
+    if "DEGRADED" in verdict or "CB" in verdict:
+        return ("⚙️ Daemons", "estate:daemons")
+
+    # RSI live fire → surface before busywork
     try:
         from gateway.operator_shell.rsi_panel import (
             HASH_FILE,
@@ -214,7 +298,9 @@ def _primary_cta(conn, C, verdict: str) -> Tuple[str, str]:
                 return ("🧠 RSI status", "estate:rsi")
     except Exception:
         pass
-    return ("⚡️ Prospector", "estate:run_prospector")
+
+    # Only when truly CLEAR — fleet overview beats Prospector tunnel vision
+    return ("🚀 Fleet", "estate:fleet")
 
 
 def mission_buttons(paused: bool, primary: Tuple[str, str]) -> List[ButtonRow]:
@@ -231,18 +317,18 @@ def mission_buttons(paused: bool, primary: Tuple[str, str]) -> List[ButtonRow]:
         [
             pause_or_resume,
             ("🚀 Fleet", "estate:fleet"),
-            ("⛽ Fuel", "estate:system_fuel"),
+            ("⚙️ Daemons", "estate:daemons"),
         ],
         [
             ("🔄 Refresh", "estate:refresh"),
-            ("↩ Undo", "estate:undo"),
+            ("⛽ Fuel", "estate:system_fuel"),
             ("🗓 Cron", "estate:setup_cron_topic"),
         ],
     ]
 
 
 def render_mission_card() -> Tuple[str, bool, List[ButtonRow]]:
-    """Compact forever-card — brand-dense, zero theater."""
+    """Compact forever-card — brand-dense, zero theater, honest verdict."""
     C = _coord()
     conn = C.connect()
     try:
@@ -252,7 +338,7 @@ def render_mission_card() -> Tuple[str, bool, List[ButtonRow]]:
         prod = _product_autonomy(conn, C)
         product = _product_line(conn, C)
         paused = bool(C.estate_paused())
-        primary = _primary_cta(conn, C, verdict)
+        primary = _primary_cta(conn, C, f"{verdict} — {detail}")
     finally:
         conn.close()
 

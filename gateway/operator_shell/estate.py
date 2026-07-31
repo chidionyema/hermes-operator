@@ -329,6 +329,244 @@ def handle_estate_action(action: str, request_id: str = "") -> PanelView:
             )
         )
 
+    if action in ("daemons", "daemon", "services", "launchctl"):
+        from gateway.operator_shell.daemons import render_daemons
+
+        text, buttons = render_daemons()
+        return _finish(
+            PanelView(
+                text=text,
+                buttons=buttons,
+                toast="Daemons",
+                proof_receipt=_proof("daemons", "done", "Estate daemon status", request_id=rid),
+            )
+        )
+
+    if action in (
+        "prospector_daemon",
+        "prospector_daemons",
+        "pd",
+        "prospect_daemon",
+    ):
+        from gateway.operator_shell.prospector_daemon import render_prospector_daemon
+
+        text, buttons = render_prospector_daemon()
+        return _finish(
+            PanelView(
+                text=text,
+                buttons=buttons,
+                toast="Prospector daemons",
+                proof_receipt=_proof(
+                    "prospector_daemon", "done", "Prospector daemon status", request_id=rid
+                ),
+            )
+        )
+
+    if action.startswith("pd_") or action in ("pd_logs",):
+        from gateway.operator_shell.prospector_daemon import (
+            confirm_card as pd_confirm,
+            confirm_set_param,
+            cron_action as pd_cron_action,
+            render_cron as pd_render_cron,
+            render_logs as pd_logs,
+            render_params as pd_render_params,
+            render_prospector_daemon,
+            run_op as pd_run,
+            set_param as pd_set_param,
+            set_paused as pd_set_paused,
+        )
+
+        unit = arg
+        if not action.startswith("pd_"):
+            pass
+        else:
+            rest = action[len("pd_") :]
+
+            # Params panel
+            if rest == "params":
+                text, buttons = pd_render_params()
+                return _finish(
+                    PanelView(
+                        text=text,
+                        buttons=buttons,
+                        toast="Params",
+                        proof_receipt=_proof(
+                            "pd_params", "done", "Prospector params", request_id=rid
+                        ),
+                    )
+                )
+
+            # Cron / outcomes panel
+            if rest == "cron":
+                text, buttons = pd_render_cron()
+                return _finish(
+                    PanelView(
+                        text=text,
+                        buttons=buttons,
+                        toast="Cron",
+                        proof_receipt=_proof(
+                            "pd_cron", "done", "Prospector cron outcomes", request_id=rid
+                        ),
+                    )
+                )
+
+            # Pause / unpause generation (PAUSE file)
+            if rest in ("pause", "unpause"):
+                ok, detail = pd_set_paused(rest == "pause")
+                receipt = _proof(
+                    f"pd_{rest}",
+                    "done" if ok else "failed",
+                    detail,
+                    request_id=rid,
+                    evidence=[detail],
+                )
+                text, buttons = render_prospector_daemon()
+                return _finish(
+                    PanelView(
+                        text=receipt + "\n\n" + text,
+                        buttons=buttons,
+                        toast=("⏸ PAUSE" if rest == "pause" else "▶️ Resume"),
+                        ok=ok,
+                        proof_receipt=receipt,
+                    )
+                )
+
+            # Cron run/pause: pd_cron_run:id / pd_cron_pause:id
+            if rest in ("cron_run", "cron_pause"):
+                op = "run" if rest == "cron_run" else "pause"
+                jid = unit or ""
+                ok, detail = pd_cron_action(op, jid)
+                receipt = _proof(
+                    f"pd_cron_{op}",
+                    "done" if ok else "failed",
+                    f"cron {op} `{jid}`",
+                    request_id=rid,
+                    evidence=[detail],
+                )
+                text, buttons = pd_render_cron()
+                return _finish(
+                    PanelView(
+                        text=receipt + "\n\n" + text,
+                        buttons=buttons,
+                        toast=("✅ cron " + op) if ok else "⚠️ Failed",
+                        ok=ok,
+                        proof_receipt=receipt,
+                    )
+                )
+
+            # Apply param: estate:pd_set_confirm:interval:3600 → arg=interval:3600
+            if rest == "set_confirm":
+                parts_kv = (unit or "").split(":", 1)
+                key = parts_kv[0] if parts_kv else ""
+                val = parts_kv[1] if len(parts_kv) > 1 else ""
+                ok, detail, need_restart = pd_set_param(key, val)
+                evidence = [detail]
+                if ok and need_restart:
+                    rok, rdetail = pd_run("restart", "scheduler")
+                    evidence.append(f"restart: {rdetail}")
+                    ok = ok and rok
+                    detail = detail + " · " + rdetail
+                receipt = _proof(
+                    "pd_set",
+                    "done" if ok else "failed",
+                    f"set `{key}={val}`",
+                    request_id=rid,
+                    evidence=evidence,
+                )
+                text, buttons = pd_render_params()
+                return _finish(
+                    PanelView(
+                        text=receipt + "\n\n" + text,
+                        buttons=buttons,
+                        toast=("✅ set " + key) if ok else "⚠️ Failed",
+                        ok=ok,
+                        proof_receipt=receipt,
+                    )
+                )
+
+            # Confirm prompt: estate:pd_set:interval:3600 → arg=interval:3600
+            if rest == "set":
+                parts_kv = (unit or "").split(":", 1)
+                key = parts_kv[0] if parts_kv else ""
+                val = parts_kv[1] if len(parts_kv) > 1 else ""
+                text, buttons = confirm_set_param(key, val)
+                return _finish(PanelView(text=text, buttons=buttons, toast="Confirm set"))
+
+            if rest.endswith("_confirm"):
+                op_name = rest[: -len("_confirm")]
+                ok, detail = pd_run(op_name, unit or "scheduler")
+                receipt = _proof(
+                    f"pd_{op_name}",
+                    "done" if ok else "failed",
+                    f"Prospector {op_name} `{unit or 'scheduler'}`",
+                    request_id=rid,
+                    evidence=[detail],
+                )
+                text, buttons = render_prospector_daemon()
+                return _finish(
+                    PanelView(
+                        text=receipt + "\n\n" + text,
+                        buttons=buttons,
+                        toast=("✅ " + op_name) if ok else "⚠️ Failed",
+                        ok=ok,
+                        proof_receipt=receipt,
+                    )
+                )
+            if rest == "logs":
+                text, buttons = pd_logs(unit or "scheduler")
+                return _finish(
+                    PanelView(
+                        text=text,
+                        buttons=buttons,
+                        toast="Logs",
+                        proof_receipt=_proof(
+                            "pd_logs", "done", f"Prospector logs `{unit}`", request_id=rid
+                        ),
+                    )
+                )
+            # confirm prompt for start/stop/restart/run_now
+            text, buttons = pd_confirm(rest, unit or "scheduler")
+            return _finish(PanelView(text=text, buttons=buttons, toast="Confirm"))
+
+    if action.startswith("daemon_"):
+        from gateway.operator_shell.daemons import (
+            confirm_card as d_confirm,
+            render_daemons,
+            run_op as d_run,
+            _resolve_short,
+        )
+
+        rest = action[len("daemon_") :]
+        unit = arg
+        if rest.endswith("_confirm"):
+            op_name = rest[: -len("_confirm")]
+            label = _resolve_short(unit or "")
+            if not label:
+                view = render_panel_view()
+                view.text = f"Unknown daemon `{unit}`\n\n" + view.text
+                view.ok = False
+                return _finish(view)
+            ok, detail = d_run(op_name, label)
+            receipt = _proof(
+                f"daemon_{op_name}",
+                "done" if ok else "failed",
+                f"{op_name} `{label}`",
+                request_id=rid,
+                evidence=[detail],
+            )
+            text, buttons = render_daemons()
+            return _finish(
+                PanelView(
+                    text=receipt + "\n\n" + text,
+                    buttons=buttons,
+                    toast=("✅ " + op_name) if ok else "⚠️ Failed",
+                    ok=ok,
+                    proof_receipt=receipt,
+                )
+            )
+        text, buttons = d_confirm(rest, _resolve_short(unit or "") or f"ai.hermes.{unit}")
+        return _finish(PanelView(text=text, buttons=buttons, toast="Confirm"))
+
     if action in ("builds", "ci", "deploys", "ship"):
         from gateway.operator_shell.builds import render_builds
 

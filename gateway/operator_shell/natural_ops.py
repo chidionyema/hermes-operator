@@ -75,6 +75,56 @@ _PATTERNS = [
         r"^\s*(disarm\s+(self[-\s]?improv\w*|learning|rsi)|"
         r"disable\s+(self[-\s]?improv\w*|learning|rsi))\s*$", re.I),
      "disarm_learning", "", "Disarm learning"),
+    # Estate / Prospector daemons (before generic "run prospector")
+    (re.compile(
+        r"^\s*(daemons?|services?|launchctl|estate\s+daemons?)\s*\??\s*$", re.I),
+     "daemons", "", "Daemons"),
+    (re.compile(
+        r"^\s*(prospector\s+daemons?|prospect\s+daemons?|"
+        r"prospector\s+(status|health)|daemon\s+status\s+prospector|"
+        r"how's\s+prospector(\s+daemon)?|how\s+is\s+prospector(\s+daemon)?)\s*\??\s*$",
+        re.I),
+     "prospector_daemon", "", "Prospector daemons"),
+    (re.compile(
+        r"^\s*restart\s+prospector(\s+daemon|\s+scheduler|\s+sched)?\s*$", re.I),
+     "pd_restart", "scheduler", "Restart Prospector scheduler"),
+    (re.compile(
+        r"^\s*start\s+prospector(\s+daemon|\s+scheduler|\s+sched)?\s*$", re.I),
+     "pd_start", "scheduler", "Start Prospector scheduler"),
+    (re.compile(
+        r"^\s*stop\s+prospector(\s+daemon|\s+scheduler|\s+sched)?\s*$", re.I),
+     "pd_stop", "scheduler", "Stop Prospector scheduler"),
+    (re.compile(
+        r"^\s*(run|fire|kick)\s+prospector\s+watchdog\s*(now)?\s*$", re.I),
+     "pd_run_now", "watchdog", "Run Prospector watchdog now"),
+    (re.compile(
+        r"^\s*restart\s+prospector\s+watchdog\s*$", re.I),
+     "pd_run_now", "watchdog", "Run Prospector watchdog now"),
+    (re.compile(
+        r"^\s*start\s+prospector\s+watchdog\s*$", re.I),
+     "pd_run_now", "watchdog", "Run Prospector watchdog now"),
+    (re.compile(
+        r"^\s*(stop|unload)\s+prospector\s+watchdog\s*$", re.I),
+     "pd_stop", "watchdog", "Unload Prospector watchdog"),
+    (re.compile(
+        r"^\s*prospector\s+(logs?|log\s*tail|errors?)\s*$", re.I),
+     "pd_logs", "scheduler", "Prospector logs"),
+    (re.compile(
+        r"^\s*prospector\s+(params?|settings?|knobs|interval|flags)\s*\??\s*$", re.I),
+     "pd_params", "", "Prospector params"),
+    (re.compile(
+        r"^\s*prospector\s+(cron|schedule|outcomes?|ticks?)\s*\??\s*$", re.I),
+     "pd_cron", "", "Prospector cron"),
+    (re.compile(
+        r"^\s*pause\s+prospector(\s+gen(eration)?)?\s*$", re.I),
+     "pd_pause", "", "Pause Prospector gen"),
+    (re.compile(
+        r"^\s*(unpause|resume)\s+prospector(\s+gen(eration)?)?\s*$", re.I),
+     "pd_unpause", "", "Resume Prospector gen"),
+    (re.compile(
+        r"^\s*set\s+prospector\s+(interval|concurrency|batch_size|daily_cap)\s+(\d+)\s*$",
+        re.I),
+     "pd_set", "{g1}:{g2}", "Set Prospector param"),
     # Ops
     (re.compile(r"^\s*(stop\s+(the\s+)?agent|kill\s+(the\s+)?run|halt)\s*$", re.I),
      "stop_agent", "", "Stop agent"),
@@ -122,7 +172,8 @@ def match_natural_op(text: str) -> Optional[NaturalOp]:
         if not m:
             continue
         args = args_tmpl
-        if "{g1}" in args_tmpl:
-            args = (m.group(1) or "") if m.lastindex else ""
+        if m.lastindex:
+            for i in range(1, m.lastindex + 1):
+                args = args.replace(f"{{g{i}}}", m.group(i) or "")
         return NaturalOp(action=action, args=args, proof_label=label)
     return None

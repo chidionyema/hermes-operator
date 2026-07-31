@@ -127,11 +127,25 @@ def render_fleet() -> Tuple[str, List[ButtonRow]]:
     buttons: List[ButtonRow] = [
         [
             ("🏗 Builds", "estate:builds"),
-            ("⚡️ Prospector", "estate:run_prospector"),
+            ("⚙️ Prospect daemons", "estate:prospector_daemon"),
+        ],
+        [
+            ("⚡️ Run Prospector", "estate:run_prospector"),
+            ("⚙️ Estate daemons", "estate:daemons"),
         ],
         [
             ("📥 Inbox", "estate:inbox"),
             ("🎛 Mission", "estate:refresh"),
         ],
     ]
+    # Prefixed glance for Prospector daemon health
+    try:
+        from gateway.operator_shell.prospector_daemon import glance_line
+
+        glance = glance_line()
+        if glance:
+            lines.insert(1, glance)
+            lines.insert(2, "")
+    except Exception:
+        pass
     return "\n".join(lines).rstrip(), buttons
